@@ -13,6 +13,8 @@ let scoreText = ""; // 用於 p5.js 繪圖的文字
 // 新增：煙火特效所需的全域變數
 // -----------------------------------------------------------------
 let fireworks = []; // 儲存所有煙火和爆炸粒子
+const FIREWORK_GRAVITY = 0.2; // 煙火火箭受到的重力
+const PARTICLE_GRAVITY = 0.15; // 爆炸粒子受到的重力
 
 
 window.addEventListener('message', function (event) {
@@ -47,7 +49,6 @@ function setup() {
     // ... (其他設置)
     createCanvas(windowWidth / 2, windowHeight / 2); 
     background(255); 
-    // 當使用動畫 (如煙火) 時，需要啟用 loop() 或移除 noLoop()
     // 為了讓煙火動起來，移除 noLoop()，讓 draw() 持續執行
     // noLoop(); // 移除此行
 } 
@@ -56,8 +57,9 @@ function setup() {
 
 function draw() { 
     // 清除背景時帶一點透明度，產生殘影效果 (Trails)
-    background(255, 30); // 清除背景
-
+    // 為了讓文字清晰，我們使用白色背景並設定透明度來讓煙火有殘影
+    background(255); 
+    
     // 計算百分比
     let percentage = (maxScore > 0) ? (finalScore / maxScore) * 100 : 0;
 
@@ -69,25 +71,25 @@ function draw() {
     // -----------------------------------------------------------------
     if (percentage >= 90) {
         // 滿分或高分：顯示鼓勵文本，使用鮮豔顏色
-        fill(0, 200, 50); // 綠色 [6]
+        fill(0, 200, 50); // 綠色
         text("恭喜！優異成績！", width / 2, height / 2 - 50);
         
         // -------------------------------------------------------------
-        // **新增** 90分以上：啟動煙火特效
+        // **新增** 90分以上：啟動煙火特效 (確保在畫布內)
         // -------------------------------------------------------------
         if (random(1) < 0.05) { // 大約每 20 幀發射一個煙火
-             fireworks.push(new Firework()); 
+             fireworks.push(new Firework(width / 2, height)); 
         }
 
         // -------------------------------------------------------------
         
     } else if (percentage >= 60) {
-        // 中等分數：顯示一般文本，使用黃色 [6]
+        // 中等分數：顯示一般文本，使用黃色
         fill(255, 181, 35); 
         text("成績良好，請再接再厲。", width / 2, height / 2 - 50);
         
     } else if (percentage > 0) {
-        // 低分：顯示警示文本，使用紅色 [6]
+        // 低分：顯示警示文本，使用紅色
         fill(200, 0, 0); 
         text("需要加強努力！", width / 2, height / 2 - 50);
         
@@ -108,13 +110,13 @@ function draw() {
     // -----------------------------------------------------------------
     
     if (percentage >= 90) {
-        // 畫一個大圓圈代表完美 [7]
+        // 畫一個大圓圈代表完美
         fill(0, 200, 50, 150); // 帶透明度
         noStroke();
         circle(width / 2, height / 2 + 150, 150);
         
     } else if (percentage >= 60) {
-        // 畫一個方形 [4]
+        // 畫一個方形
         fill(255, 181, 35, 150);
         rectMode(CENTER);
         rect(width / 2, height / 2 + 150, 150, 150);
@@ -123,6 +125,15 @@ function draw() {
     // -----------------------------------------------------------------
     // **新增**：更新和渲染煙火
     // -----------------------------------------------------------------
+    
+    // 將煙火的繪製放在背景和文字的"底下"（先繪製），並使用半透明來模擬夜空效果
+    push(); // 儲存當前的繪圖狀態
+    blendMode(ADD); // 使用相加混色模式來實現發光效果
+    
+    // 為了讓煙火有殘影，將這部分背景用半透明清除
+    fill(255, 30); 
+    rect(0, 0, width, height);
+
     for (let i = fireworks.length - 1; i >= 0; i--) {
         fireworks[i].update();
         fireworks[i].show();
@@ -132,6 +143,9 @@ function draw() {
             fireworks.splice(i, 1);
         }
     }
+    
+    pop(); // 恢復繪圖狀態，避免影響後續的文字繪製
+    // 由於您的分數文字繪製在上面，所以煙火會在文字下方（視覺上）
 }
 
 
@@ -139,7 +153,7 @@ function draw() {
 // 步驟三：定義煙火和粒子類別 (Particle System)
 // -----------------------------------------------------------------
 
-// 粒子類別：用於爆炸後的碎片
+// 粒子類別：用於爆炸後的碎片和主體
 class Particle {
     constructor(x, y, hue, firework = false) {
         this.pos = createVector(x, y);
@@ -148,8 +162,9 @@ class Particle {
         this.hue = hue;
         
         if (this.firework) {
-            // 主體粒子向上移動
-            this.vel = createVector(0, random(-10, -18)); 
+            // 主體粒子向上移動，限制在畫布底部中間附近發射
+            // 隨機發射速度
+            this.vel = createVector(random(-1, 1), random(-10, -18)); 
             this.acc = createVector(0, 0);
         } else {
             // 爆炸碎片向隨機方向散開
@@ -191,6 +206,11 @@ class Particle {
     }
     
     done() {
+        // 主體粒子：爆炸後即結束
+        if (this.firework) {
+            return false; // 主體由 Firework 類別控制爆炸時機
+        }
+        // 爆炸碎片：壽命結束即結束
         return this.lifespan < 0;
     }
 }
@@ -198,10 +218,12 @@ class Particle {
 // 煙火類別：管理發射、爆炸
 class Firework {
     constructor() {
-        this.pos_x = random(width * 0.2, width * 0.8); // 隨機 X 位置
+        // 將發射位置限制在畫布的 X 範圍內
+        this.pos_x = random(width * 0.1, width * 0.9); 
         this.hue = random(255); // 隨機顏色
+        this.target_height = random(height * 0.2, height * 0.5); // 目標爆炸高度
         
-        // 建立主體粒子 (火箭)
+        // 建立主體粒子 (火箭)，從畫布底部發射
         this.rocket = new Particle(this.pos_x, height, this.hue, true); 
         this.exploded = false;
         this.particles = []; // 爆炸碎片陣列
@@ -209,11 +231,11 @@ class Firework {
 
     update() {
         if (!this.exploded) {
-            this.rocket.applyForce(createVector(0, 0.2)); // 模擬重力
+            this.rocket.applyForce(createVector(0, FIREWORK_GRAVITY)); // 模擬重力
             this.rocket.update();
             
-            // 模擬爆炸條件：到達隨機高度
-            if (this.rocket.vel.y >= 0) {
+            // 模擬爆炸條件：到達隨機高度或速度歸零
+            if (this.rocket.pos.y <= this.target_height || this.rocket.vel.y >= 0) {
                  this.explode();
                  this.exploded = true;
             }
@@ -221,11 +243,11 @@ class Firework {
         
         // 更新碎片
         for (let i = this.particles.length - 1; i >= 0; i--) {
-            this.particles[i].applyForce(createVector(0, 0.15)); // 碎片受重力影響
+            this.particles[i].applyForce(createVector(0, PARTICLE_GRAVITY)); // 碎片受重力影響
             this.particles[i].update();
         }
         
-        // 移除已結束的碎片 (在 show() 之後處理更佳，但為簡化放在這裡)
+        // 移除已結束的碎片
         this.particles = this.particles.filter(p => !p.done());
     }
 
@@ -235,10 +257,12 @@ class Firework {
             let p = new Particle(this.rocket.pos.x, this.rocket.pos.y, this.hue);
             this.particles.push(p);
         }
+        // 清除火箭
+        this.rocket = null; 
     }
 
     show() {
-        if (!this.exploded) {
+        if (!this.exploded && this.rocket) {
             this.rocket.show();
         }
         
