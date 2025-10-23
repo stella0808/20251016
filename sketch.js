@@ -9,6 +9,11 @@ let finalScore = 0;
 let maxScore = 0;
 let scoreText = ""; // 用於 p5.js 繪圖的文字
 
+// -----------------------------------------------------------------
+// 新增：煙火特效所需的全域變數
+// -----------------------------------------------------------------
+let fireworks = []; // 儲存所有煙火和爆炸粒子
+
 
 window.addEventListener('message', function (event) {
     // 執行來源驗證...
@@ -42,16 +47,19 @@ function setup() {
     // ... (其他設置)
     createCanvas(windowWidth / 2, windowHeight / 2); 
     background(255); 
-    noLoop(); // 如果您希望分數只有在改變時才繪製，保留此行
+    // 當使用動畫 (如煙火) 時，需要啟用 loop() 或移除 noLoop()
+    // 為了讓煙火動起來，移除 noLoop()，讓 draw() 持續執行
+    // noLoop(); // 移除此行
 } 
 
 // score_display.js 中的 draw() 函數片段
 
 function draw() { 
-    background(255); // 清除背景
+    // 清除背景時帶一點透明度，產生殘影效果 (Trails)
+    background(255, 30); // 清除背景
 
     // 計算百分比
-    let percentage = (finalScore / maxScore) * 100;
+    let percentage = (maxScore > 0) ? (finalScore / maxScore) * 100 : 0;
 
     textSize(80); 
     textAlign(CENTER);
@@ -63,6 +71,15 @@ function draw() {
         // 滿分或高分：顯示鼓勵文本，使用鮮豔顏色
         fill(0, 200, 50); // 綠色 [6]
         text("恭喜！優異成績！", width / 2, height / 2 - 50);
+        
+        // -------------------------------------------------------------
+        // **新增** 90分以上：啟動煙火特效
+        // -------------------------------------------------------------
+        if (random(1) < 0.05) { // 大約每 20 幀發射一個煙火
+             fireworks.push(new Firework()); 
+        }
+
+        // -------------------------------------------------------------
         
     } else if (percentage >= 60) {
         // 中等分數：顯示一般文本，使用黃色 [6]
@@ -103,6 +120,136 @@ function draw() {
         rect(width / 2, height / 2 + 150, 150, 150);
     }
     
-    // 如果您想要更複雜的視覺效果，還可以根據分數修改線條粗細 (strokeWeight) 
-    // 或使用 sin/cos 函數讓圖案的動畫效果有所不同 [8, 9]。
+    // -----------------------------------------------------------------
+    // **新增**：更新和渲染煙火
+    // -----------------------------------------------------------------
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+        fireworks[i].update();
+        fireworks[i].show();
+        
+        if (fireworks[i].done()) {
+            // 移除已結束的煙火
+            fireworks.splice(i, 1);
+        }
+    }
+}
+
+
+// =================================================================
+// 步驟三：定義煙火和粒子類別 (Particle System)
+// -----------------------------------------------------------------
+
+// 粒子類別：用於爆炸後的碎片
+class Particle {
+    constructor(x, y, hue, firework = false) {
+        this.pos = createVector(x, y);
+        this.firework = firework; // 是否為發射中的主體
+        this.lifespan = 255;
+        this.hue = hue;
+        
+        if (this.firework) {
+            // 主體粒子向上移動
+            this.vel = createVector(0, random(-10, -18)); 
+            this.acc = createVector(0, 0);
+        } else {
+            // 爆炸碎片向隨機方向散開
+            this.vel = p5.Vector.random2D();
+            this.vel.mult(random(2, 10)); // 隨機速度
+            this.acc = createVector(0, 0); // 之後會應用重力
+        }
+    }
+
+    applyForce(force) {
+        this.acc.add(force);
+    }
+
+    update() {
+        if (!this.firework) {
+            // 爆炸碎片會受到重力和空氣阻力
+            this.vel.mult(0.9); // 阻力
+            this.lifespan -= 4; // 減少生命值 (透明度)
+        }
+        
+        this.vel.add(this.acc);
+        this.pos.add(this.vel);
+        this.acc.mult(0); // 重設加速度
+    }
+
+    show() {
+        colorMode(HSB);
+        if (!this.firework) {
+            // 爆炸碎片
+            strokeWeight(2);
+            stroke(this.hue, 255, 255, this.lifespan);
+        } else {
+            // 主體粒子
+            strokeWeight(4);
+            stroke(this.hue, 255, 255);
+        }
+        point(this.pos.x, this.pos.y);
+        colorMode(RGB); // 恢復預設顏色模式
+    }
+    
+    done() {
+        return this.lifespan < 0;
+    }
+}
+
+// 煙火類別：管理發射、爆炸
+class Firework {
+    constructor() {
+        this.pos_x = random(width * 0.2, width * 0.8); // 隨機 X 位置
+        this.hue = random(255); // 隨機顏色
+        
+        // 建立主體粒子 (火箭)
+        this.rocket = new Particle(this.pos_x, height, this.hue, true); 
+        this.exploded = false;
+        this.particles = []; // 爆炸碎片陣列
+    }
+
+    update() {
+        if (!this.exploded) {
+            this.rocket.applyForce(createVector(0, 0.2)); // 模擬重力
+            this.rocket.update();
+            
+            // 模擬爆炸條件：到達隨機高度
+            if (this.rocket.vel.y >= 0) {
+                 this.explode();
+                 this.exploded = true;
+            }
+        }
+        
+        // 更新碎片
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].applyForce(createVector(0, 0.15)); // 碎片受重力影響
+            this.particles[i].update();
+        }
+        
+        // 移除已結束的碎片 (在 show() 之後處理更佳，但為簡化放在這裡)
+        this.particles = this.particles.filter(p => !p.done());
+    }
+
+    explode() {
+        // 產生大量碎片
+        for (let i = 0; i < 100; i++) {
+            let p = new Particle(this.rocket.pos.x, this.rocket.pos.y, this.hue);
+            this.particles.push(p);
+        }
+    }
+
+    show() {
+        if (!this.exploded) {
+            this.rocket.show();
+        }
+        
+        // 顯示碎片
+        for (let particle of this.particles) {
+            particle.show();
+        }
+    }
+
+    done() {
+        // 如果已爆炸且碎片都消失，則煙火結束
+        return this.exploded && this.particles.length === 0;
+    }
 }
